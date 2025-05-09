@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { JwtService } from '@nestjs/jwt';
@@ -24,185 +25,243 @@ export class UserService {
 
   async findUser(email: string) {
     try {
-      let user = await this.prisma.user.findFirst({ where: { email } });
+      const user = await this.prisma.user.findFirst({ where: { email } });
       if (!user) {
-        return 'User not found!';
+        throw new NotFoundException('User not found!');
       }
       return user;
     } catch (error) {
-      return error;
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to find user');
     }
   }
 
   async findAll() {
     try {
-      let user = this.prisma.user.findMany();
-      return user;
+      const users = await this.prisma.user.findMany();
+      return users;
     } catch (error) {
-      return error;
+      throw new InternalServerErrorException('Failed to fetch users');
     }
   }
 
   async findOne(id: string) {
     try {
-      let user = this.prisma.user.findFirst({ where: { id } });
+      const user = await this.prisma.user.findFirst({ where: { id } });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
       return user;
     } catch (error) {
-      return error;
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to find user');
     }
   }
 
   private generateOTP(length = 6): string {
-    const digits = '0123456789';
-    let otp = '';
-    for (let i = 0; i < length; i++) {
-      otp += digits[Math.floor(Math.random() * 10)];
+    try {
+      const digits = '0123456789';
+      let otp = '';
+      for (let i = 0; i < length; i++) {
+        otp += digits[Math.floor(Math.random() * 10)];
+      }
+      return otp;
+    } catch (error) {
+      throw new InternalServerErrorException('Failed to generate OTP');
     }
-    return otp;
   }
 
   async register(data: CreateUserDto) {
-    const existingUser = await this.prisma.user.findFirst({
-      where: { email: data.email },
-    });
-
-    if (existingUser) {
-      throw new BadRequestException('User already exists!');
-    }
-
-    const hash = bcrypt.hashSync(data.password, 10);
-    const otp = this.generateOTP();
-    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-    const newUser = await this.prisma.user.create({
-      data: {
-        ...data,
-        password: hash,
-        otp,
-        otpExpiresAt,
-      },
-    });
-
     try {
-      await this.mailer.sendMail(
-        data.email,
-        'Your OTP Code',
-        `Your OTP code is: ${otp}\n\nIt will expire in 5 minutes.`,
-      );
-      console.log('OTP sended to: ', data.email);
+      const existingUser = await this.prisma.user.findFirst({
+        where: { email: data.email },
+      });
+
+      if (existingUser) {
+        throw new BadRequestException('User already exists!');
+      }
+
+      const hash = bcrypt.hashSync(data.password, 10);
+      const otp = this.generateOTP();
+      const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+      const newUser = await this.prisma.user.create({
+        data: {
+          ...data,
+          password: hash,
+          otp,
+          otpExpiresAt,
+        },
+      });
+
+      try {
+        await this.mailer.sendMail(
+          data.email,
+          'Your OTP Code',
+          `Your OTP code is: ${otp}\n\nIt will expire in 5 minutes.`,
+        );
+        console.log('OTP sent to: ', data.email);
+      } catch (mailError) {
+        console.error('Failed to send OTP: ', mailError);
+        // Rollback user creation if email fails
+        await this.prisma.user.delete({ where: { id: newUser.id } });
+        throw new InternalServerErrorException('Failed to send OTP');
+      }
+
+      return newUser;
     } catch (error) {
-      console.log('Error to send otp: ', error);
-      return error;
+      if (
+        error instanceof BadRequestException ||
+        error instanceof InternalServerErrorException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to register user');
     }
   }
 
   async verifyOtp(data: VerifyOtpDto) {
-    const { email, otp } = data;
+    try {
+      const { email, otp } = data;
 
-    const user = await this.prisma.user.findFirst({ where: { email } });
+      const user = await this.prisma.user.findFirst({ where: { email } });
 
-    if (!user) throw new BadRequestException('User not found!');
+      if (!user) throw new NotFoundException('User not found!');
 
-    if (user.isVerified) return { message: 'User already verified' };
+      if (user.isVerified) return { message: 'User already verified' };
 
-    if (user.otp !== otp) throw new BadRequestException('Invalid OTP!');
+      if (user.otp !== otp) throw new BadRequestException('Invalid OTP!');
 
-    if (user.otpExpiresAt && new Date() > user.otpExpiresAt) {
-      throw new BadRequestException('OTP expired!');
+      if (user.otpExpiresAt && new Date() > user.otpExpiresAt) {
+        throw new BadRequestException('OTP expired!');
+      }
+
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          isVerified: true,
+        },
+      });
+
+      await this.mailer.sendMail(
+        data.email,
+        'Registered successfully!',
+        'Thank you for registering!🫱🏼‍🫲🏽✅',
+      );
+
+      return { message: 'Email verified successfully!' };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to verify OTP');
     }
-
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        isVerified: true,
-      },
-    });
-
-    await this.mailer.sendMail(
-      data.email,
-      'Registered successfully!',
-      'Thank you for registering!🫱🏼‍🫲🏽✅',
-    );
-
-    return { message: 'Email verified successfully!' };
   }
 
   async login(data: LoginUserDto, request: Request) {
-    const user = await this.prisma.user.findFirst({
-      where: { email: data.email },
-    });
+    try {
+      const user = await this.prisma.user.findFirst({
+        where: { email: data.email },
+      });
 
-    if (!user) {
-      throw new BadRequestException('User not found!');
+      if (!user) {
+        throw new NotFoundException('User not found!');
+      }
+
+      const match =
+        user && (await bcrypt.compare(data.password, user.password));
+
+      if (!match) {
+        throw new BadRequestException('Wrong credentials!');
+      }
+
+      const payload = { id: user.id, role: user.role };
+
+      const access_token = this.jwt.sign(payload, {
+        secret: 'accessSecret',
+        expiresIn: '15m',
+      });
+
+      const refresh_token = this.jwt.sign(payload, {
+        secret: 'refreshSecret',
+        expiresIn: '7d',
+      });
+
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+
+      await this.prisma.session.create({
+        data: {
+          userId: user.id,
+          token: refresh_token,
+          ipAddress: request.ip || '',
+          expiresAt: expiresAt,
+          deviceInfo: request.headers['user-agent'] || '',
+        },
+      });
+
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken: refresh_token },
+      });
+
+      await this.mailer.sendMail(
+        data.email,
+        'Logged in',
+        'You have successfully logged in ✅',
+      );
+
+      return { access_token, refresh_token };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to login');
     }
-
-    const match = user && (await bcrypt.compare(data.password, user.password));
-
-    if (!match) {
-      throw new BadRequestException('Wrong credentials!');
-    }
-
-    const payload = { id: user.id, role: user.role };
-
-    const access_token = this.jwt.sign(payload, {
-      secret: 'accessSecret',
-      expiresIn: '15m',
-    });
-
-    const refresh_token = this.jwt.sign(payload, {
-      secret: 'refreshSecret',
-      expiresIn: '7d',
-    });
-
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    await this.prisma.session.create({
-      data: {
-        userId: user.id,
-        token: refresh_token,
-        ipAddress: request.ip || '',
-        expiresAt: expiresAt,
-        deviceInfo: request.headers['user-agent'] || '',
-      },
-    });
-
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken: refresh_token },
-    });
-
-    await this.mailer.sendMail(
-      data.email,
-      'Logged in',
-      'You have successfully logged in ✅',
-    );
-
-    return { access_token, refresh_token };
   }
 
   async updatePassword(userId: string, dto: UpdatePasswordDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
 
-    if (!user) throw new NotFoundException('User not found');
+      if (!user) throw new NotFoundException('User not found');
 
-    const passwordMatches = await bcrypt.compare(
-      dto.oldPassword,
-      user.password,
-    );
-    if (!passwordMatches)
-      throw new BadRequestException('Old password is incorrect');
+      const passwordMatches = await bcrypt.compare(
+        dto.oldPassword,
+        user.password,
+      );
+      if (!passwordMatches)
+        throw new BadRequestException('Old password is incorrect');
 
-    const hashedNewPassword = await bcrypt.hash(dto.newPassword, 10);
+      const hashedNewPassword = await bcrypt.hash(dto.newPassword, 10);
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { password: hashedNewPassword },
-    });
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { password: hashedNewPassword },
+      });
 
-    return { message: 'Password updated successfully' };
+      return { message: 'Password updated successfully' };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update password');
+    }
   }
 
   async refreshAccessToken(data: RefreshTokenDto) {
@@ -232,26 +291,58 @@ export class UserService {
         access_token: newAccessToken,
       };
     } catch (error) {
-      console.error('Error refreshing access token:', error);
-
-      throw new BadRequestException(error.message);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to refresh access token');
     }
   }
 
-  async promoteToAdmin(req, res) {
+  async promoteToAdmin(id: string) {
     try {
-      
+      const user = await this.prisma.user.findUnique({
+        where: { id },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      if (user.role === 'Admin') {
+        return { message: 'User is already an Admin', user };
+      }
+
+      const updatedUser = await this.prisma.user.update({
+        where: { id },
+        data: { role: 'Admin' },
+      });
+
+      return {
+        message: 'User successfully promoted to Admin',
+        user: updatedUser,
+      };
     } catch (error) {
-      return 
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to promote user to admin');
     }
   }
 
   async delete(id: string) {
     try {
-      let remove = this.prisma.user.delete({ where: { id } });
-      return remove;
+      const user = await this.prisma.user.findUnique({ where: { id } });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      await this.prisma.user.delete({ where: { id } });
+      return { message: 'User deleted successfully' };
     } catch (error) {
-      return error;
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to delete user');
     }
   }
 }
