@@ -107,7 +107,6 @@ export class UserService {
         console.log('OTP sent to: ', data.email);
       } catch (mailError) {
         console.error('Failed to send OTP: ', mailError);
-        // Rollback user creation if email fails
         await this.prisma.user.delete({ where: { id: newUser.id } });
         throw new InternalServerErrorException('Failed to send OTP');
       }
@@ -121,6 +120,15 @@ export class UserService {
         throw error;
       }
       throw new InternalServerErrorException('Failed to register user');
+    }
+  }
+
+  async me(id: string) {
+    try {
+      let userMe = await this.prisma.user.findFirst({ where: { id: id } });
+      return userMe;
+    } catch (error) {
+      return error;
     }
   }
 
@@ -287,7 +295,6 @@ export class UserService {
       );
 
       return {
-        message: 'New access token generated successfully ✅',
         access_token: newAccessToken,
       };
     } catch (error) {

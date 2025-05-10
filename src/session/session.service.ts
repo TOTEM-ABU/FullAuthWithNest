@@ -1,13 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { UpdateSessionDto } from './dto/update-session.dto';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class SessionService {
-  findAll() {
-    return `This action returns all session`;
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll() {
+    let session = await this.prisma.session.findMany();
+    return session;
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} session`;
+  async remove(id: string) {
+    let session = await this.prisma.session.delete({ where: { id } });
+    return session;
   }
 }
