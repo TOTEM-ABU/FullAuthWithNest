@@ -183,6 +183,10 @@ export class UserService {
         throw new NotFoundException('User not found!');
       }
 
+      if (!user.isVerified) {
+        throw new BadRequestException('Please verify your email first');
+      }
+
       const match =
         user && (await bcrypt.compare(data.password, user.password));
 
@@ -245,13 +249,6 @@ export class UserService {
       });
 
       if (!user) throw new NotFoundException('User not found');
-
-      const passwordMatches = await bcrypt.compare(
-        dto.oldPassword,
-        user.password,
-      );
-      if (!passwordMatches)
-        throw new BadRequestException('Old password is incorrect');
 
       const hashedNewPassword = await bcrypt.hash(dto.newPassword, 10);
 

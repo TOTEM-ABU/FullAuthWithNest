@@ -12,7 +12,7 @@ CREATE TABLE "User" (
     "refreshToken" TEXT,
     "deviceInfo" TEXT,
     "isVerified" BOOLEAN NOT NULL DEFAULT false,
-    "role" "RoleStatus" NOT NULL,
+    "role" "RoleStatus" NOT NULL DEFAULT 'User',
 
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
 );

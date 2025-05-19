@@ -42,17 +42,16 @@ export class UserController {
     return this.userService.refreshAccessToken(dto);
   }
 
+  @UseGuards(AuthGuard)
   @Patch('update-password/:id')
-  async updatePassword(
-    @Param('id') userId: string,
-    @Body() dto: UpdatePasswordDto,
-  ) {
-    return this.userService.updatePassword(userId, dto);
+  async updatePassword(@Req() req: Request, @Body() dto: UpdatePasswordDto) {
+    return this.userService.updatePassword(req['user'], dto);
   }
 
-  @Patch('promote/:id')
-  async promoteToAdmin(@Param('id') id: string) {
-    return this.userService.promoteToAdmin(id);
+  @UseGuards(AuthGuard)
+  @Patch('promoteToAdmin/:id')
+  async promoteToAdmin(@Req() req: Request) {
+    return this.userService.promoteToAdmin(req['user']);
   }
 
   @Delete(':id')
@@ -71,7 +70,7 @@ export class UserController {
   }
 
   @UseGuards(AuthGuard)
-  @Get('/me')
+  @Get('me/:id')
   async me(@Req() req: Request) {
     return this.userService.me(req['user']);
   }
