@@ -14,6 +14,8 @@ import { LoginUserDto } from './dto/login-user.dto';
 import { Request } from 'express';
 import { UpdatePasswordDto } from './dto/update-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UserService {
@@ -93,8 +95,6 @@ export class UserService {
         data: {
           ...data,
           password: hash,
-          otp,
-          otpExpiresAt,
         },
       });
 
@@ -142,11 +142,7 @@ export class UserService {
 
       if (user.isVerified) return { message: 'User already verified' };
 
-      if (user.otp !== otp) throw new BadRequestException('Invalid OTP!');
-
-      if (user.otpExpiresAt && new Date() > user.otpExpiresAt) {
-        throw new BadRequestException('OTP expired!');
-      }
+      if (data.otp !== otp) throw new BadRequestException('Invalid OTP!');
 
       await this.prisma.user.update({
         where: { id: user.id },
@@ -302,34 +298,43 @@ export class UserService {
     }
   }
 
-  async promoteToAdmin(id: string) {
+  async resendOtp(data: ResendOtpDto) {
     try {
-      const user = await this.prisma.user.findUnique({
-        where: { id },
-      });
+      const { email } = data;
 
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
+      const user = await this.prisma.user.findFirst({ where: { email } });
 
-      if (user.role === 'Admin') {
-        return { message: 'User is already an Admin', user };
-      }
+      if (!user) throw new NotFoundException('User not found!');
 
-      const updatedUser = await this.prisma.user.update({
-        where: { id },
-        data: { role: 'Admin' },
-      });
+      if (user.isVerified) return { message: 'User already verified' };
 
-      return {
-        message: 'User successfully promoted to Admin',
-        user: updatedUser,
-      };
+      const otp = this.generateOTP();
+      const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+      await this.mailer.sendMail(
+        data.email,
+        'Your OTP Code',
+        `Your OTP code is: ${otp}\n\nIt will expire in 5 minutes.`,
+      );
+
+      return { message: 'OTP resent successfully!' };
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      throw new InternalServerErrorException('Failed to promote user to admin');
+      throw new InternalServerErrorException('Failed to resend OTP');
+    }
+  }
+
+  async updateUser(id: string, data: UpdateUserDto) {
+    try {
+      const user = await this.prisma.user.update({ where: { id }, data });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+      return user;
+    } catch (error) {
+      throw new InternalServerErrorException('Failed to update user');
     }
   }
 
